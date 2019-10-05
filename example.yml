@@ -1,5 +1,5 @@
 log:
-  level: info
+  level: debug
   format: plain
 
 database:
@@ -12,11 +12,23 @@ database:
   sync-interval: 5
 
 aws:
-  dynamodb-table: terraboard
+  dynamodb-table: dynamodb-terraboard
+  secret-key: default
+  access-key: default
+  region: eu-west-1
   s3:
-    bucket: terraboard
-    key-prefix:
-    file-extension: .tfstate
+    - bucket: terraboard
+      region: eu-west-3
+      key-prefix:
+      file-extension: .tfstate
+    - bucket: terraboard2
+      region: eu-west-3
+      key-prefix:
+      file-extension: .tfstate
+    - bucket: terraboard3
+      region: eu-west-3
+      key-prefix:
+      file-extension: .tfstate
 
 web:
   port: 9090

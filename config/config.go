@@ -30,6 +30,9 @@ type DBConfig struct {
 
 // S3BucketConfig stores the S3 bucket configuration
 type S3BucketConfig struct {
+	SecretKey     string `yaml:"secret-key" description:"AWS Secret Key for accessing bucket."`
+	AccessKey     string `yaml:"access-key" description:"AWS Access Key ID for accessing bucket."`
+	Region        string `yaml:"region" description:"Bucket's region." default:"eu-west-1"`
 	Bucket        string `long:"s3-bucket" env:"AWS_BUCKET" yaml:"bucket" description:"AWS S3 bucket."`
 	KeyPrefix     string `long:"key-prefix" env:"AWS_KEY_PREFIX" yaml:"key-prefix" description:"AWS Key Prefix."`
 	FileExtension string `long:"file-extension" env:"AWS_FILE_EXTENSION" yaml:"file-extension" description:"File extension of state files." default:".tfstate"`
@@ -37,8 +40,11 @@ type S3BucketConfig struct {
 
 // AWSConfig stores the DynamoDB table and S3 Bucket configuration
 type AWSConfig struct {
-	DynamoDBTable string         `long:"dynamodb-table" env:"AWS_DYNAMODB_TABLE" yaml:"dynamodb-table" description:"AWS DynamoDB table for locks."`
-	S3            S3BucketConfig `group:"S3 Options" yaml:"s3"`
+	SecretKey     string           `long:"aws-secret-key" env:"AWS_SECRET_ACCESS_KEY" yaml:"secret-key" description:"AWS Secret Key."`
+	AccessKey     string           `long:"aws-access-key" env:"AWS_ACCESS_KEY_ID" yaml:"access-key" description:"AWS Access Key ID."`
+	Region        string           `long:"aws-region" env:"AWS_REGION" yaml:"region" description:"AWS S3 region."`
+	DynamoDBTable string           `long:"dynamodb-table" env:"AWS_DYNAMODB_TABLE" yaml:"dynamodb-table" description:"AWS DynamoDB table for locks."`
+	S3            []S3BucketConfig `group:"S3 Options" yaml:"s3"`
 }
 
 // WebConfig stores the UI interface parameters
@@ -65,10 +71,10 @@ type Config struct {
 
 // LoadConfigFromYaml loads the config from config file
 func (c *Config) LoadConfigFromYaml() *Config {
-	fmt.Printf("Loading config from %s\n", c.ConfigFilePath)
+	log.Infof("Loading config from %s\n", c.ConfigFilePath)
 	yamlFile, err := ioutil.ReadFile(c.ConfigFilePath)
 	if err != nil {
-		log.Printf("yamlFile.Get err #%v ", err)
+		log.Fatalf("yamlFile.Get err #%v ", err)
 	}
 
 	err = yaml.Unmarshal(yamlFile, c)

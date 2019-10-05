@@ -17,23 +17,52 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var svc *s3.S3
+type BucketConfig struct {
+	AWSConfig     *aws.Config
+	Bucket        string
+	KeyPrefix     string
+	FileExtension string
+}
+
 var dynamoSvc *dynamodb.DynamoDB
-var bucket string
 var dynamoTable string
-var keyPrefix string
+
+var bucket string
+var bucketsConfig []*BucketConfig
 var fileExtension string
+var keyPrefix string
+var svc *s3.S3
 
 // Setup sets up AWS S3 connection
 func Setup(c *config.Config) {
-	sess := session.Must(session.NewSession())
-	svc = s3.New(sess, &aws.Config{})
-	bucket = c.AWS.S3.Bucket
-	keyPrefix = c.AWS.S3.KeyPrefix
-	fileExtension = c.AWS.S3.FileExtension
+	for _, bucket := range c.AWS.S3 {
+		awsConfig := &aws.Config{
+			Region: aws.String(c.AWS.Region),
+		}
+		if bucket.Region != "" {
+			awsConfig.Region = aws.String(bucket.Region)
+		}
+		bucketConfig := &BucketConfig{
+			AWSConfig:     awsConfig,
+			Bucket:        bucket.Bucket,
+			KeyPrefix:     bucket.KeyPrefix,
+			FileExtension: bucket.FileExtension,
+		}
+		bucketsConfig = append(bucketsConfig, bucketConfig)
+	}
 
-	dynamoSvc = dynamodb.New(sess, &aws.Config{})
+	sess := session.Must(session.NewSession(&aws.Config{Region: aws.String(c.AWS.Region)}))
+	bucket = bucketsConfig[0].Bucket
+	keyPrefix = bucketsConfig[0].KeyPrefix
+	fileExtension = bucketsConfig[0].FileExtension
+
+	svc = s3.New(sess)
+	if bucketsConfig[0].awsConfig != nil {
+		svc = s3.New(sess, bucketsConfig[0].AWSConfig)
+	}
+
 	dynamoTable = c.AWS.DynamoDBTable
+	dynamoSvc = dynamodb.New(sess)
 }
 
 // LockInfo stores information on a State Lock
