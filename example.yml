@@ -18,15 +18,21 @@ aws:
   region: eu-west-1
   s3:
     - bucket: terraboard
-      region: eu-west-3
+      region: eu-west-1
+      access-key:
+      secret-key:
       key-prefix:
       file-extension: .tfstate
-    - bucket: terraboard2
-      region: eu-west-3
+    - bucket: terraboard-sta
+      region: eu-west-1
+      access-key:
+      secret-key:
       key-prefix:
       file-extension: .tfstate
     - bucket: terraboard3
-      region: eu-west-3
+      region: eu-west-1
+      access-key:
+      secret-key:
       key-prefix:
       file-extension: .tfstate
 

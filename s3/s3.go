@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
@@ -16,54 +17,6 @@ import (
 	"github.com/hashicorp/terraform/states/statefile"
 	log "github.com/sirupsen/logrus"
 )
-
-type BucketConfig struct {
-	AWSConfig     *aws.Config
-	Bucket        string
-	KeyPrefix     string
-	FileExtension string
-}
-
-var dynamoSvc *dynamodb.DynamoDB
-var dynamoTable string
-
-var bucket string
-var bucketsConfig []*BucketConfig
-var fileExtension string
-var keyPrefix string
-var svc *s3.S3
-
-// Setup sets up AWS S3 connection
-func Setup(c *config.Config) {
-	for _, bucket := range c.AWS.S3 {
-		awsConfig := &aws.Config{
-			Region: aws.String(c.AWS.Region),
-		}
-		if bucket.Region != "" {
-			awsConfig.Region = aws.String(bucket.Region)
-		}
-		bucketConfig := &BucketConfig{
-			AWSConfig:     awsConfig,
-			Bucket:        bucket.Bucket,
-			KeyPrefix:     bucket.KeyPrefix,
-			FileExtension: bucket.FileExtension,
-		}
-		bucketsConfig = append(bucketsConfig, bucketConfig)
-	}
-
-	sess := session.Must(session.NewSession(&aws.Config{Region: aws.String(c.AWS.Region)}))
-	bucket = bucketsConfig[0].Bucket
-	keyPrefix = bucketsConfig[0].KeyPrefix
-	fileExtension = bucketsConfig[0].FileExtension
-
-	svc = s3.New(sess)
-	if bucketsConfig[0].awsConfig != nil {
-		svc = s3.New(sess, bucketsConfig[0].AWSConfig)
-	}
-
-	dynamoTable = c.AWS.DynamoDBTable
-	dynamoSvc = dynamodb.New(sess)
-}
 
 // LockInfo stores information on a State Lock
 type LockInfo struct {
@@ -82,40 +35,61 @@ type Lock struct {
 	Info   string
 }
 
-// GetLocks returns a map of locks by State path
-func GetLocks() (locks map[string]LockInfo, err error) {
-	if dynamoTable == "" {
-		err = fmt.Errorf("no dynamoDB table provided, not getting locks")
-		return
+type BucketConfig struct {
+	AWSConfig     *aws.Config
+	Bucket        string
+	KeyPrefix     string
+	FileExtension string
+}
+
+var bucket string
+var bucketsConfig []BucketConfig
+var fileExtension string
+var keyPrefix string
+var svc *s3.S3
+
+var dynamoSvc *dynamodb.DynamoDB
+var dynamoTable string
+
+func getBucketConfig(defaultConfig *aws.Config, bucket config.S3BucketConfig) BucketConfig {
+	awsConfig := *defaultConfig
+	if bucket.AccessKey != "" && bucket.SecretKey != "" {
+		awsConfig.Credentials = credentials.NewStaticCredentials(bucket.AccessKey, bucket.SecretKey, "")
+	} else {
+		log.Debugf("Using default AWS credentials for bucket %s", bucket.Bucket)
+	}
+	if bucket.Region != "" {
+		awsConfig.Region = aws.String(bucket.Region)
+	} else {
+		log.Debugf("Using default AWS region for bucket %s", bucket.Bucket)
+	}
+	bucketConfig := BucketConfig{
+		AWSConfig:     &awsConfig,
+		Bucket:        bucket.Bucket,
+		KeyPrefix:     bucket.KeyPrefix,
+		FileExtension: bucket.FileExtension,
+	}
+	return bucketConfig
+}
+
+// Setup sets up AWS S3 connection
+func Setup(c *config.Config) {
+	awsConfig := &aws.Config{
+		Credentials: credentials.NewStaticCredentials(c.AWS.AccessKey, c.AWS.SecretKey, ""),
+		Region:      aws.String(c.AWS.Region),
+	}
+	sess := session.Must(session.NewSession(awsConfig))
+	dynamoSvc = dynamodb.New(sess)
+	dynamoTable = c.AWS.DynamoDBTable
+
+	for _, bucket := range c.AWS.S3 {
+		bucketsConfig = append(bucketsConfig, getBucketConfig(awsConfig, bucket))
 	}
 
-	results, err := dynamoSvc.Scan(&dynamodb.ScanInput{
-		TableName: &dynamoTable,
-	})
-	if err != nil {
-		return locks, err
-	}
-
-	var lockList []Lock
-	err = dynamodbattribute.UnmarshalListOfMaps(results.Items, &lockList)
-	if err != nil {
-		return locks, err
-	}
-
-	locks = make(map[string]LockInfo)
-	infoPrefix := fmt.Sprintf("%s/", bucket)
-	for _, lock := range lockList {
-		if lock.Info != "" {
-			var info LockInfo
-			err = json.Unmarshal([]byte(lock.Info), &info)
-			if err != nil {
-				return locks, err
-			}
-
-			locks[strings.TrimPrefix(info.Path, infoPrefix)] = info
-		}
-	}
-	return
+	bucket = bucketsConfig[0].Bucket
+	keyPrefix = bucketsConfig[0].KeyPrefix
+	fileExtension = bucketsConfig[0].FileExtension
+	svc = s3.New(sess, bucketsConfig[0].AWSConfig)
 }
 
 // GetStates returns a slice of State files in the S3 bucket
@@ -201,5 +175,41 @@ func GetState(st, versionID string) (sf *statefile.File, err error) {
 		return sf, fmt.Errorf("Failed to find state")
 	}
 
+	return
+}
+
+// GetLocks returns a map of locks by State path
+func GetLocks() (locks map[string]LockInfo, err error) {
+	if dynamoTable == "" {
+		err = fmt.Errorf("No dynamoDB table provided, not getting locks")
+		return
+	}
+
+	results, err := dynamoSvc.Scan(&dynamodb.ScanInput{
+		TableName: &dynamoTable,
+	})
+	if err != nil {
+		return locks, err
+	}
+
+	var lockList []Lock
+	err = dynamodbattribute.UnmarshalListOfMaps(results.Items, &lockList)
+	if err != nil {
+		return locks, err
+	}
+
+	locks = make(map[string]LockInfo)
+	infoPrefix := fmt.Sprintf("%s/", bucket)
+	for _, lock := range lockList {
+		if lock.Info != "" {
+			var info LockInfo
+			err = json.Unmarshal([]byte(lock.Info), &info)
+			if err != nil {
+				return locks, err
+			}
+
+			locks[strings.TrimPrefix(info.Path, infoPrefix)] = info
+		}
+	}
 	return
 }
