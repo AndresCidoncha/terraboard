@@ -35,6 +35,7 @@ type Lock struct {
 	Info   string
 }
 
+// BucketConfig stores AWSConfig and bucket info
 type BucketConfig struct {
 	AWSConfig     *aws.Config
 	Bucket        string
