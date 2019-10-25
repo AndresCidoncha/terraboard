@@ -37,17 +37,13 @@ type Lock struct {
 
 // BucketConfig stores AWSConfig and bucket info
 type BucketConfig struct {
-	AWSConfig     *aws.Config
+	Svc           *s3.S3
 	Bucket        string
 	KeyPrefix     string
 	FileExtension string
 }
 
-var bucket string
-var bucketsConfig []BucketConfig
-var fileExtension string
-var keyPrefix string
-var svc *s3.S3
+var bucketsConfigs map[string]BucketConfig
 
 var dynamoSvc *dynamodb.DynamoDB
 var dynamoTable string
@@ -65,7 +61,7 @@ func getBucketConfig(defaultConfig *aws.Config, bucket config.S3BucketConfig) Bu
 		log.Debugf("Using default AWS region for bucket %s", bucket.Bucket)
 	}
 	bucketConfig := BucketConfig{
-		AWSConfig:     &awsConfig,
+		Svc:           s3.New(session.Must(session.NewSession()), &awsConfig),
 		Bucket:        bucket.Bucket,
 		KeyPrefix:     bucket.KeyPrefix,
 		FileExtension: bucket.FileExtension,
@@ -83,21 +79,18 @@ func Setup(c *config.Config) {
 	dynamoSvc = dynamodb.New(sess)
 	dynamoTable = c.AWS.DynamoDBTable
 
+	bucketsConfigs = make(map[string]BucketConfig)
 	for _, bucket := range c.AWS.S3 {
-		bucketsConfig = append(bucketsConfig, getBucketConfig(awsConfig, bucket))
+		bucketsConfigs[bucket.Bucket] = getBucketConfig(awsConfig, bucket)
 	}
-
-	bucket = bucketsConfig[0].Bucket
-	keyPrefix = bucketsConfig[0].KeyPrefix
-	fileExtension = bucketsConfig[0].FileExtension
-	svc = s3.New(sess, bucketsConfig[0].AWSConfig)
 }
 
 // GetStates returns a slice of State files in the S3 bucket
-func GetStates() (states []string, err error) {
+func GetStates(bucket string) (states []string, err error) {
+	svc := bucketsConfigs[bucket].Svc
 	result, err := svc.ListObjects(&s3.ListObjectsInput{
 		Bucket: aws.String(bucket),
-		Prefix: &keyPrefix,
+		Prefix: aws.String(bucketsConfigs[bucket].KeyPrefix),
 	})
 	if err != nil {
 		return states, err
@@ -105,7 +98,7 @@ func GetStates() (states []string, err error) {
 
 	var keys []string
 	for _, obj := range result.Contents {
-		if strings.HasSuffix(*obj.Key, fileExtension) {
+		if strings.HasSuffix(*obj.Key, bucketsConfigs[bucket].FileExtension) {
 			keys = append(keys, *obj.Key)
 		}
 	}
@@ -114,7 +107,8 @@ func GetStates() (states []string, err error) {
 }
 
 // GetVersions returns a slice of AWS S3 Versions in the bucket
-func GetVersions(prefix string) (versions []*s3.ObjectVersion, err error) {
+func GetVersions(bucket, prefix string) (versions []*s3.ObjectVersion, err error) {
+	svc := bucketsConfigs[bucket].Svc
 	result, err := svc.ListObjectVersions(&s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucket),
 		Prefix: aws.String(prefix),
@@ -127,7 +121,8 @@ func GetVersions(prefix string) (versions []*s3.ObjectVersion, err error) {
 }
 
 // GetState retrieves a single State from the S3 bucket
-func GetState(st, versionID string) (sf *statefile.File, err error) {
+func GetState(bucket, st, versionID string) (sf *statefile.File, err error) {
+	svc := bucketsConfigs[bucket].Svc
 	log.WithFields(log.Fields{
 		"path":       st,
 		"version_id": versionID,
@@ -200,7 +195,9 @@ func GetLocks() (locks map[string]LockInfo, err error) {
 	}
 
 	locks = make(map[string]LockInfo)
-	infoPrefix := fmt.Sprintf("%s/", bucket)
+	// TODO: list all buckets locks
+	// infoPrefix := fmt.Sprintf("%s/", bucket)
+	infoPrefix := fmt.Sprintf("%s/", "bucket")
 	for _, lock := range lockList {
 		if lock.Info != "" {
 			var info LockInfo

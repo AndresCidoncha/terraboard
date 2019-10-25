@@ -54,22 +54,22 @@ func isKnownStateVersion(statesVersions map[string][]string, versionID, path str
 
 // Refresh the DB from S3
 // This should be the only direct bridge between S3 and the DB
-func refreshDB(syncInterval uint16, d *db.Database) {
+func refreshDB(syncInterval uint16, d *db.Database, bucket string) {
 	interval := time.Duration(syncInterval) * time.Minute
 	for {
-		log.Infof("Refreshing DB from S3")
-		states, err := s3.GetStates()
+		log.Infof("Refreshing DB from %s bucket", bucket)
+		states, err := s3.GetStates(bucket)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"error": err,
-			}).Error("Failed to retrieve states from S3. Retrying in 1 minute.")
+			}).Errorf("Failed to retrieve states from %s bucket. Retrying in 1 minute.", bucket)
 			time.Sleep(interval)
 			continue
 		}
 
 		statesVersions := d.ListStatesVersions()
 		for _, st := range states {
-			versions, _ := s3.GetVersions(st)
+			versions, _ := s3.GetVersions(bucket, st)
 			for _, v := range versions {
 				if _, ok := statesVersions[*v.VersionId]; ok {
 					log.WithFields(log.Fields{
@@ -86,7 +86,7 @@ func refreshDB(syncInterval uint16, d *db.Database) {
 					}).Debug("State is already in the database, skipping")
 					continue
 				}
-				state, err := s3.GetState(st, *v.VersionId)
+				state, err := s3.GetState(bucket, st, *v.VersionId)
 				if err != nil {
 					log.WithFields(log.Fields{
 						"path":       st,
@@ -151,7 +151,9 @@ func main() {
 	if c.DB.NoSync {
 		log.Infof("Not syncing database, as requested.")
 	} else {
-		go refreshDB(c.DB.SyncInterval, database)
+		for _, bucket := range c.AWS.S3 {
+			go refreshDB(c.DB.SyncInterval, database, bucket.Bucket)
+		}
 	}
 	defer database.Close()
 
